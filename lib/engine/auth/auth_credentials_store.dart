@@ -4,6 +4,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 class AuthCredentialsStore {
   static final AuthCredentialsStore instance = AuthCredentialsStore._();
   AuthCredentialsStore._();
+  static const String _keyMalClientId = '226acbf293f6dabf8c2417c06dfb6662';
 
   final _secureStorage = const FlutterSecureStorage();
 
@@ -28,13 +29,21 @@ class AuthCredentialsStore {
     }
   }
 
-  Future<String?> getMALClientId() async {
-    final prefs = await SharedPreferences.getInstance();
-    return prefs.getString('mal_client_id');
-  }
+
 
   Future<String?> getMALClientSecret() async {
     return await _secureStorage.read(key: 'mal_client_secret');
+  }
+
+  Future<void> setMALClientId(String clientId) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_keyMalClientId, clientId);
+  }
+
+  Future<String?> getMALClientId() async {
+    final prefs = await SharedPreferences.getInstance();
+    // Fall back to your registered key if not yet set in settings
+    return prefs.getString(_keyMalClientId) ?? '226acbf293f6dabf8c2417c06dfb6662';
   }
 
   Future<void> setSimklCredentials(String clientId, String? clientSecret) async {
@@ -45,9 +54,12 @@ class AuthCredentialsStore {
     }
   }
 
+  static const String _defaultSimklClientId = '2e9e4a59b3053e770f2b5c2154bb8321386b2271826c2d2fe8f5f22268722b4b';
+
   Future<String?> getSimklClientId() async {
     final prefs = await SharedPreferences.getInstance();
-    return prefs.getString('simkl_client_id');
+    final stored = prefs.getString('simkl_client_id');
+    return (stored != null && stored.isNotEmpty) ? stored : _defaultSimklClientId;
   }
 
   Future<String?> getSimklClientSecret() async {

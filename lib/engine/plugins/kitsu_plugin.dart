@@ -14,7 +14,7 @@ class KitsuPlugin implements MediaPlugin {
   PluginType get supportedType => PluginType.anime;
 
   @override
-  Future<List<MediaSearchResult>> search(String query) async {
+  Future<List<MediaSearchResult>> search(String query, {bool isManualSearch = false}) async {
     final cleanQuery = query.replaceAll(RegExp(r'\[.*?\]'), '')
         .replaceAll(RegExp(r'\b(S\d+|E\d+|1080p|720p|x265|x264|HEVC|AVC|AMZN|WEB-DL|DDP\d+\.\d+|Dual-Audio|Multi-Audio)\b.*', caseSensitive: false), '')
         .trim();
@@ -171,6 +171,7 @@ class KitsuPlugin implements MediaPlugin {
       totalEpisodes: attr['episodeCount'],
       status: attr['status'],
       averageScore: parsedScore,
+      rawFormat: attr['subtype']?.toString(),
       type: _mapSubtypeToType(attr['subtype']),
     );
   }

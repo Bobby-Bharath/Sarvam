@@ -1,3 +1,4 @@
+// lib/database/media_database.dart
 import 'package:flutter/foundation.dart';
 import 'package:path/path.dart';
 import 'package:sqflite/sqflite.dart';
@@ -5,6 +6,9 @@ import 'package:sqflite/sqflite.dart';
 class MediaDatabase extends ChangeNotifier {
   static final MediaDatabase instance = MediaDatabase._init();
   static Database? _database;
+
+  // Bumped to 8 to trigger migration for any missing columns
+  static const int _dbVersion = 8;
 
   MediaDatabase._init();
 
@@ -20,40 +24,39 @@ class MediaDatabase extends ChangeNotifier {
 
     return await openDatabase(
       path,
-      version: 7, // Bumped to 7
+      version: _dbVersion,
       onCreate: _createDB,
       onUpgrade: _onUpgrade,
     );
   }
 
   Future _onUpgrade(Database db, int oldVersion, int newVersion) async {
-    if (oldVersion < 6) {
-      final List<String> mediaEntityCols = [
-        'franchise_id TEXT',
+    if (oldVersion < 8) {
+      final List<String> requiredCols = [
         'status TEXT',
+        'average_score REAL',
         'start_date TEXT',
         'end_date TEXT',
-        'average_score TEXT',
+        'franchise_id TEXT',
         'subtype TEXT',
         'id_mal INTEGER',
         'entity_type TEXT',
         'folder_path TEXT',
+        'backdrop_url TEXT',
       ];
 
-      for (final col in mediaEntityCols) {
+      for (final col in requiredCols) {
         try {
           await db.execute("ALTER TABLE media_entities ADD COLUMN $col;");
         } catch (_) {
-          // Column might already exist from a previous failed upgrade
+          // Ignore if column already exists
         }
       }
 
       try {
         await db.execute("ALTER TABLE episodes ADD COLUMN is_filler INTEGER DEFAULT 0;");
       } catch (_) {}
-    }
 
-    if (oldVersion < 7) {
       try {
         await db.execute("ALTER TABLE episodes ADD COLUMN episode_type TEXT DEFAULT 'CANON';");
       } catch (_) {}
@@ -64,20 +67,26 @@ class MediaDatabase extends ChangeNotifier {
     const idType = 'TEXT PRIMARY KEY';
     const textType = 'TEXT';
     const integerType = 'INTEGER';
+    const realType = 'REAL';
     const boolType = 'INTEGER'; // 0 for false, 1 for true
 
     await db.execute('''
       CREATE TABLE media_entities (
         id $idType,
         display_provider $textType,
-        entity_type $textType, -- TV_SERIES, ANIME, MOVIE, MOVIE_COLLECTION
-        folder_path $textType, -- Binds a folder to this entity
+        entity_type $textType,
+        folder_path $textType,
         title $textType NOT NULL,
         original_title $textType,
         poster_url $textType,
         backdrop_url $textType,
         overview $textType,
         year $integerType,
+        status $textType,
+        average_score $realType,
+        start_date $textType,
+        end_date $textType,
+        subtype $textType,
         total_seasons $integerType,
         total_episodes $integerType,
         anilist_id $integerType,
@@ -85,8 +94,8 @@ class MediaDatabase extends ChangeNotifier {
         tmdb_id $integerType,
         simkl_id $integerType,
         trakt_id $integerType,
-        id_mal $integerType, -- Added v5
-        franchise_id $textType, -- Groups related entries
+        id_mal $integerType,
+        franchise_id $textType,
         allow_sync $boolType DEFAULT 1,
         is_manual_match $boolType DEFAULT 0
       )
@@ -142,7 +151,7 @@ class MediaDatabase extends ChangeNotifier {
     ''');
   }
 
-  // --- CRUD for media_entities ---
+  // --- CRUD Operations ---
 
   Future<int> upsertMediaEntity(Map<String, dynamic> row) async {
     final db = await instance.database;
@@ -177,7 +186,6 @@ class MediaDatabase extends ChangeNotifier {
 
   Future<List<Map<String, dynamic>>> getAllMediaEntities() async {
     final db = await instance.database;
-    // Group by franchise_id or title to show one card per show
     return await db.rawQuery('''
       SELECT me.*, COUNT(lf.file_path) as mapped_file_count
       FROM media_entities me
@@ -193,7 +201,7 @@ class MediaDatabase extends ChangeNotifier {
     return await db.query(
       'media_entities',
       where: 'franchise_id = ? OR title = ?',
-      whereArgs: [franchiseId, franchiseId], // Fallback to title matching if ID is missing
+      whereArgs: [franchiseId, franchiseId],
       orderBy: 'year ASC',
     );
   }
@@ -206,7 +214,6 @@ class MediaDatabase extends ChangeNotifier {
 
     int count = 0;
     await db.transaction((txn) async {
-      // 1. Identify all IDs in the franchise bundle
       final List<Map<String, dynamic>> related = await txn.query(
         'media_entities',
         columns: ['id'],
@@ -217,7 +224,6 @@ class MediaDatabase extends ChangeNotifier {
 
       if (targetIds.isEmpty) return;
 
-      // 2. Unlink local_files
       await txn.update(
         'local_files',
         {'media_entity_id': null, 'episode_id': null},
@@ -225,14 +231,12 @@ class MediaDatabase extends ChangeNotifier {
         whereArgs: targetIds,
       );
 
-      // 3. Delete episodes
       await txn.delete(
         'episodes',
         where: 'media_entity_id IN (${targetIds.map((_) => '?').join(',')})',
         whereArgs: targetIds,
       );
 
-      // 4. Delete media_entities
       count = await txn.delete(
         'media_entities',
         where: 'id IN (${targetIds.map((_) => '?').join(',')})',
@@ -245,8 +249,6 @@ class MediaDatabase extends ChangeNotifier {
   }
 
   Future<int> deleteFranchise(String id) async => deleteMediaEntity(id);
-
-  // --- CRUD for episodes ---
 
   Future<int> upsertEpisode(Map<String, dynamic> row) async {
     final db = await instance.database;
@@ -277,8 +279,6 @@ class MediaDatabase extends ChangeNotifier {
       ORDER BY ep.season_number ASC, ep.episode_number ASC
     ''', [entityId]);
   }
-
-  // --- CRUD for local_files ---
 
   Future<int> upsertLocalFile(Map<String, dynamic> row) async {
     final db = await instance.database;

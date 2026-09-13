@@ -4,7 +4,7 @@ import '../../engine/plugins/models/plugin_models.dart';
 import '../../engine/plugins/plugin_registry.dart';
 import '../../engine/metadata/filename_tokenizer.dart';
 import '../../database/media_database.dart';
-import '../../main.dart'; 
+import '../../engine/plugins/simkl_plugin.dart';
 
 class InteractiveMappingPage extends StatefulWidget {
   final List<AssetEntity> files;
@@ -29,7 +29,7 @@ class _InteractiveMappingPageState extends State<InteractiveMappingPage> with Ti
   FranchiseManifest? _franchise;
   bool _isLoadingFranchise = true;
   String _currentProvider = 'kitsu';
-
+  late final TextEditingController _searchController;
   // Global Mapping State: Episode ID (from manifest) -> Local Asset
   final Map<String, AssetEntity?> _mapping = {};
   final Set<String> _ignoredAssetIds = {};
@@ -39,12 +39,16 @@ class _InteractiveMappingPageState extends State<InteractiveMappingPage> with Ti
   void initState() {
     super.initState();
     _currentProvider = widget.media.providerId;
+    _searchController = TextEditingController(text: widget.media.title);
     _fetchFranchise(widget.media.id, _currentProvider);
   }
 
   @override
   void dispose() {
-    if (mounted) _tabController.dispose();
+    if (mounted) {
+      _tabController.dispose();
+      _searchController.dispose();
+    }
     super.dispose();
   }
 
@@ -52,44 +56,129 @@ class _InteractiveMappingPageState extends State<InteractiveMappingPage> with Ti
 
   // lib/ui/pairing/interactive_mapping_page.dart
 
-  Future<void> _fetchFranchise(String mediaId, String providerId) async {
+
+
+  // Inside _InteractiveMappingPageState
+
+  // Inside _InteractiveMappingPageState in lib/ui/pairing/interactive_mapping_page.dart
+
+  Future<void> _fetchFranchise(String mediaId, String providerId, {String? customQuery}) async {
     setState(() {
       _isLoadingFranchise = true;
       _franchise = null;
     });
 
     final plugin = PluginRegistry.instance.getPlugin(providerId);
-    if (plugin != null) {
-      String actualId = mediaId;
+    if (plugin == null) {
+      setState(() => _isLoadingFranchise = false);
+      return;
+    }
 
-      // When switching providers, resolve the correct ID for the new provider
-      if (providerId != widget.media.providerId || actualId.startsWith('anilist_') || actualId.startsWith('mal_')) {
-        final cleanTitle = widget.media.title
-            .replaceAll(RegExp(r'\[.*?\]|\(.*?\)', caseSensitive: false), '')
-            .trim();
+    String actualId = mediaId;
 
-        final searchResults = await plugin.search(cleanTitle);
+    try {
+      // Search explicitly only if a custom query was typed OR if provider was switched
+      if (customQuery != null && customQuery.trim().isNotEmpty) {
+        final queryToUse = customQuery.trim();
+        final searchResults = await plugin.search(queryToUse, isManualSearch: true);
         if (searchResults.isNotEmpty) {
           actualId = searchResults.first.id;
-        } else if (widget.media.idMal != null && providerId == 'mal') {
-          actualId = widget.media.idMal.toString();
+        } else {
+          if (mounted) {
+            setState(() => _isLoadingFranchise = false);
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text('No results found on ${plugin.name} for "$queryToUse". Try another title in the top bar.'),
+                backgroundColor: Colors.orange,
+              ),
+            );
+            return;
+          }
+        }
+      } else if (providerId != widget.media.providerId) {
+        final queryToUse = widget.media.title
+            .replaceAll(RegExp(r'\[.*?\]|\(.*?\)', caseSensitive: false), '')
+            .trim();
+        final searchResults = await plugin.search(queryToUse, isManualSearch: true);
+        if (searchResults.isNotEmpty) {
+          actualId = searchResults.first.id;
+        } else {
+          if (mounted) {
+            setState(() => _isLoadingFranchise = false);
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text('No results found on ${plugin.name} for "$queryToUse".'),
+                backgroundColor: Colors.orange,
+              ),
+            );
+            return;
+          }
         }
       }
 
       final franchise = await plugin.fetchFranchise(actualId);
+      _mapping.clear();
+
+      // Run Simkl ad-hoc file matcher if Simkl is selected
+      if (providerId == 'simkl' && plugin is SimklPlugin) {
+        final matchTasks = widget.files.map((file) async {
+          final assetFile = await file.file;
+          if (assetFile != null) {
+            final filename = assetFile.path.split(RegExp(r'[/\\]')).last;
+            try {
+              final matchResult = await plugin.matchFile(filename);
+              if (matchResult != null) {
+                final token = FilenameTokenizer.parse(filename);
+                final targetEpNum = token.episodeNumber ?? 1;
+
+                for (var series in franchise.entries) {
+                  for (var ep in series.episodes) {
+                    if (ep.episodeNumber == targetEpNum) {
+                      final epUniqueId = '${series.series.providerId}_${series.series.id}_e${ep.episodeNumber}';
+                      _mapping[epUniqueId] = file;
+                      break;
+                    }
+                  }
+                }
+              }
+            } catch (_) {}
+          }
+        });
+        await Future.wait(matchTasks);
+      }
+
       if (mounted) {
         setState(() {
           _franchise = franchise;
           _tabController = TabController(length: franchise.entries.length, vsync: this);
           _isLoadingFranchise = false;
-          _mapping.clear();
-          _autoMatchByToken();
+          if (providerId != 'simkl') {
+            _autoMatchByToken();
+          }
         });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() => _isLoadingFranchise = false);
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Switched to ${plugin.name}. Discovered ${franchise.entries.length} installments.')),
+          SnackBar(content: Text('Failed to load from ${plugin.name}: $e'), backgroundColor: Colors.redAccent),
         );
       }
+    } finally {
+      if (mounted && _isLoadingFranchise) {
+        setState(() {
+          _isLoadingFranchise = false;
+        });
+      }
     }
+  }
+
+  String formatDuration(Duration duration) {
+    String twoDigits(int n) => n.toString().padLeft(2, '0');
+    final hours = duration.inHours;
+    final minutes = twoDigits(duration.inMinutes.remainder(60));
+    final seconds = twoDigits(duration.inSeconds.remainder(60));
+    return hours > 0 ? '$hours:$minutes:$seconds' : '$minutes:$seconds';
   }
 
   void _autoMatchByToken() {
@@ -143,13 +232,37 @@ class _InteractiveMappingPageState extends State<InteractiveMappingPage> with Ti
     return Scaffold(
       backgroundColor: const Color(0xFF0F0F0F),
       appBar: AppBar(
-        title: const Text('Mapping Center', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18, color: Colors.white)),
-        backgroundColor: Colors.transparent,
+        title: TextField(
+          controller: _searchController,
+          style: const TextStyle(color: Colors.white, fontSize: 16),
+          textInputAction: TextInputAction.search,
+          onSubmitted: (query) {
+            if (query.trim().isNotEmpty) {
+              _fetchFranchise(widget.media.id, _currentProvider, customQuery: query.trim());
+            }
+          },
+          decoration: InputDecoration(
+            hintText: 'Search franchise title...',
+            hintStyle: const TextStyle(color: Colors.white38),
+            border: InputBorder.none,
+            isDense: true,
+            suffixIcon: IconButton(
+              icon: const Icon(Icons.search, color: Colors.redAccent, size: 20),
+              onPressed: () {
+                final query = _searchController.text.trim();
+                if (query.isNotEmpty) {
+                  _fetchFranchise(widget.media.id, _currentProvider, customQuery: query);
+                }
+              },
+            ),
+          ),
+        ),
+        backgroundColor: const Color(0xFF1E1E1E),
         elevation: 0,
         actions: [
           _buildProviderSwitcher(),
         ],
-        bottom: _franchise == null ? null : TabBar(
+        bottom: (_isLoadingFranchise || _franchise == null) ? null : TabBar(
           controller: _tabController,
           isScrollable: true,
           tabAlignment: TabAlignment.start,
@@ -159,20 +272,20 @@ class _InteractiveMappingPageState extends State<InteractiveMappingPage> with Ti
           tabs: _franchise!.entries.map((e) => Tab(text: e.series.title)).toList(),
         ),
       ),
-      body: _isLoadingFranchise 
-        ? const Center(child: CircularProgressIndicator(color: Colors.redAccent))
-        : Column(
-            children: [
-              Expanded(
-                child: TabBarView(
-                  controller: _tabController,
-                  children: _franchise!.entries.map((e) => _buildManifestList(e)).toList(),
-                ),
-              ),
-              _buildUnassignedDock(),
-              _buildFooter(),
-            ],
+      body: (_isLoadingFranchise || _franchise == null)
+          ? const Center(child: CircularProgressIndicator(color: Colors.redAccent))
+          : Column(
+        children: [
+          Expanded(
+            child: TabBarView(
+              controller: _tabController,
+              children: _franchise!.entries.map((e) => _buildManifestList(e)).toList(),
+            ),
           ),
+          _buildUnassignedDock(),
+          _buildFooter(),
+        ],
+      ),
     );
   }
 

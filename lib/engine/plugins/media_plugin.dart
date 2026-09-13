@@ -5,7 +5,7 @@ abstract class MediaPlugin {
   String get name;
   PluginType get supportedType;
 
-  Future<List<MediaSearchResult>> search(String query);
+  Future<List<MediaSearchResult>> search(String query, {bool isManualSearch = false});
   Future<List<EpisodeManifest>> fetchManifest(String mediaId);
   Future<FranchiseManifest> fetchFranchise(String mediaId);
   

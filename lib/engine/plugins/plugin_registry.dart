@@ -51,18 +51,18 @@ class PluginRegistry {
     await prefs.setStringList('enabled_plugins', _enabledPlugins.toList());
   }
 
-  Future<List<MediaSearchResult>> searchUnified(String query) async {
+  Future<List<MediaSearchResult>> searchUnified(String query, {bool isManualSearch = false}) async {
     // 1. Try primary
     final primary = _plugins[_primaryProvider];
     if (primary != null && _enabledPlugins.contains(primary.id)) {
-      final results = await primary.search(query);
+      final results = await primary.search(query, isManualSearch: isManualSearch);
       if (results.isNotEmpty) return results;
     }
 
     // 2. Fallback to others
     for (var plugin in _plugins.values) {
       if (plugin.id == _primaryProvider || !_enabledPlugins.contains(plugin.id)) continue;
-      final results = await plugin.search(query);
+      final results = await plugin.search(query, isManualSearch: isManualSearch);
       if (results.isNotEmpty) return results;
     }
 

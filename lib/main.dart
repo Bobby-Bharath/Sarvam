@@ -1,7 +1,6 @@
 import 'dart:async';
 import 'dart:io';
 import 'dart:convert';
-import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:media_kit/media_kit.dart';
@@ -13,16 +12,13 @@ import 'package:audio_service/audio_service.dart';
 
 import 'player/player_screen.dart';
 import 'database/media_database.dart';
-import 'engine/metadata/media_matcher_service.dart';
 import 'engine/metadata/filename_tokenizer.dart';
-import 'engine/metadata/providers/anilist_provider.dart';
-import 'ui/pairing/pairing_manager_page.dart';
 import 'ui/pairing/pairing_manager_page.dart';
 import 'ui/pairing/manual_matcher_dialog.dart';
 import 'ui/pairing/interactive_mapping_page.dart';
+import 'ui/pairing/pre_flight_mapping_dialog.dart';
 import 'ui/hub/series_details_screen.dart';
 import 'ui/hub/tracker_watchlist_page.dart';
-import 'ui/settings/plugin_settings_page.dart';
 import 'ui/settings/tracker_accounts_page.dart';
 import 'engine/plugins/plugin_registry.dart';
 import 'engine/sync/sync_dispatcher.dart';
@@ -641,35 +637,22 @@ class _FolderVideosScreenState extends State<FolderVideosScreen> {
   }
 
   Future<void> _runAutoPair() async {
-    setState(() => _isLoading = true);
     final token = FilenameTokenizer.parse(widget.album.name);
-    final results = await PluginRegistry.instance.searchUnified(token.cleanTitle);
-    
-    if (mounted) {
-      setState(() => _isLoading = false);
-      if (results.isNotEmpty) {
-        String? folderPath;
-        if (_videos.isNotEmpty) {
-           final firstFile = await _videos.first.originFile;
-           folderPath = firstFile?.parent.path;
-        }
+    String? folderPath;
+    if (_videos.isNotEmpty) {
+      final firstFile = await _videos.first.originFile;
+      folderPath = firstFile?.parent.path;
+    }
 
-        if (context.mounted) {
-          Navigator.push(
-            context,
-            MaterialPageRoute(
-              builder: (_) => InteractiveMappingPage(
-                files: _videos,
-                media: results.first,
-                folderId: widget.album.id,
-                folderPath: folderPath,
-              ),
-            ),
-          ).then((_) => setState(() {}));
-        }
-      } else {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('No matches found for Auto-Pair')));
-      }
+    if (context.mounted) {
+      PreFlightMappingDialog.show(
+        context,
+        files: _videos,
+        initialQuery: token.cleanTitle,
+        folderId: widget.album.id,
+        folderPath: folderPath,
+        onComplete: () => setState(() {}),
+      );
     }
   }
 

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
@@ -7,7 +8,7 @@ import 'package:url_launcher/url_launcher.dart';
 import 'auth_credentials_store.dart';
 
 class SIMKLService {
-  static const String fallbackClientId = "YOUR_DEFAULT_SIMKL_CLIENT_ID";
+  static const String fallbackClientId = "2e9e4a59b3053e770f2b5c2154bb8321386b2271826c2d2fe8f5f22268722b4b";
   final _secureStorage = const FlutterSecureStorage();
 
   Future<void> login() async {
@@ -37,13 +38,19 @@ class SIMKLService {
           'redirect_uri': 'omni://callback',
           'grant_type': 'authorization_code'
         }),
-      );
+      ).timeout(const Duration(seconds: 10));
 
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
-        await _secureStorage.write(key: 'simkl_token', value: data['access_token']);
-        return await _verifyAndSaveProfile(data['access_token'], clientId);
+        if (data is Map<String, dynamic> && data['access_token'] != null) {
+          await _secureStorage.write(key: 'simkl_token', value: data['access_token'].toString());
+          return await _verifyAndSaveProfile(data['access_token'].toString(), clientId);
+        }
+      } else {
+        debugPrint('SIMKL token exchange failed with status ${response.statusCode}: ${response.body}');
       }
+    } on TimeoutException {
+      debugPrint('SIMKL token exchange timed out after 10s');
     } catch (e) {
       debugPrint('SIMKL token exchange error: $e');
     }
@@ -58,17 +65,23 @@ class SIMKLService {
           'Authorization': 'Bearer $token',
           'simkl-api-key': clientId,
         },
-      );
+      ).timeout(const Duration(seconds: 10));
 
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
         final user = data['user'];
-        final prefs = await SharedPreferences.getInstance();
-        await prefs.setString('simkl_username', user['name']);
-        await prefs.setString('simkl_avatar', user['avatar']);
-        await prefs.setBool('simkl_logged_in', true);
-        return true;
+        if (user != null) {
+          final prefs = await SharedPreferences.getInstance();
+          await prefs.setString('simkl_username', user['name']?.toString() ?? '');
+          await prefs.setString('simkl_avatar', user['avatar']?.toString() ?? '');
+          await prefs.setBool('simkl_logged_in', true);
+          return true;
+        }
+      } else {
+        debugPrint('SIMKL profile verify failed with status ${response.statusCode}');
       }
+    } on TimeoutException {
+      debugPrint('SIMKL profile verify timed out after 10s');
     } catch (e) {
       debugPrint('SIMKL profile verify error: $e');
     }
@@ -102,13 +115,15 @@ class SIMKLService {
             }
           ]
         }),
-      );
+      ).timeout(const Duration(seconds: 10));
 
       if (response.statusCode == 200) {
         debugPrint('SIMKL: Successfully scrobbled S$seasonNumber E$episodeNumber for ID $simklId');
       } else {
-        debugPrint('SIMKL: Scrobble failed ${response.body}');
+        debugPrint('SIMKL: Scrobble failed ${response.statusCode}: ${response.body}');
       }
+    } on TimeoutException {
+      debugPrint('SIMKL scrobble timed out after 10s for ID $simklId');
     } catch (e) {
       debugPrint('SIMKL scrobble error: $e');
     }

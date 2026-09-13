@@ -76,7 +76,7 @@ class AniListPlugin implements MediaPlugin {
   ''';
 
   @override
-  Future<List<MediaSearchResult>> search(String query) async {
+  Future<List<MediaSearchResult>> search(String query, {bool isManualSearch = false}) async {
     final cleanQuery = query.replaceAll(RegExp(r'\[.*?\]'), '')
         .replaceAll(RegExp(r'\b(S\d+|E\d+|1080p|720p|x265|x264|HEVC|AVC|AMZN|WEB-DL|DDP\d+\.\d+|Dual-Audio|Multi-Audio)\b.*', caseSensitive: false), '')
         .trim();
@@ -251,6 +251,7 @@ class AniListPlugin implements MediaPlugin {
       averageScore: parsedScore,
       totalEpisodes: data['episodes'],
       idMal: data['idMal'],
+      rawFormat: data['format']?.toString(),
       type: _mapFormatToType(data['format']),
     );
   }

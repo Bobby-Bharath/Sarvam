@@ -14,8 +14,8 @@ class OAuthManager {
   final _secureStorage = const FlutterSecureStorage();
   
   static const String anilistClientId = "22510";
-  static const String malClientId = "YOUR_MAL_CLIENT_ID";
-  static const String simklClientId = "YOUR_SIMKL_CLIENT_ID";
+  static const String malClientId = "226acbf293f6dabf8c2417c06dfb6662";
+  static const String simklClientId = "2e9e4a59b3053e770f2b5c2154bb8321386b2271826c2d2fe8f5f22268722b4b";
 
   // --- PKCE Helpers ---
   String _generateCodeVerifier() {

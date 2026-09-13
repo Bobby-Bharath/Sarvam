@@ -1,5 +1,7 @@
-enum PluginType { anime, tv, movie, general }
 // lib/engine/plugins/models/plugin_models.dart
+import '../../metadata/media_tag_parser.dart';
+
+enum PluginType { anime, tv, movie, general, universal }
 
 enum MediaType { anime, movie, tv, ova }
 
@@ -17,6 +19,10 @@ class MediaSearchResult {
   final int? totalEpisodes;
   final int? idMal;
   final MediaType type;
+  final String? rawFormat;
+  final String? endDate;
+  final MediaClassification classification;
+  final AiringStatus airingStatus;
 
   MediaSearchResult({
     required this.id,
@@ -32,7 +38,24 @@ class MediaSearchResult {
     this.totalEpisodes,
     this.idMal,
     this.type = MediaType.anime,
-  });
+    this.rawFormat,
+    this.endDate,
+    MediaClassification? classification,
+    AiringStatus? airingStatus,
+  })  : classification = classification ??
+            MediaTagParser.classify(
+              title: title,
+              originalTitle: originalTitle,
+              rawFormat: rawFormat,
+              totalEpisodes: totalEpisodes,
+              overview: overview,
+            ),
+        airingStatus = airingStatus ??
+            MediaTagParser.parseAiringStatus(
+              status: status,
+              year: year,
+              endDate: endDate,
+            );
 }
 
 class EpisodeManifest {

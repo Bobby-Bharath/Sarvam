@@ -39,7 +39,7 @@ class MALPlugin implements MediaPlugin {
   }
 
   @override
-  Future<List<MediaSearchResult>> search(String query) async {
+  Future<List<MediaSearchResult>> search(String query, {bool isManualSearch = false}) async {
     final clean = _sanitizeQuery(query);
     if (clean.isEmpty) return [];
 
@@ -75,13 +75,15 @@ class MALPlugin implements MediaPlugin {
 
   Future<List<MediaSearchResult>> _searchJikan(String query) async {
     final url = Uri.parse('$_jikanBaseUrl/anime?q=${Uri.encodeComponent(query)}&limit=10');
-    appLog('Searching Jikan (Keyless) for: "$query"', tag: 'MAL');
+    appLog('Searching Jikan for: "$query"', tag: 'MAL');
     try {
       final res = await http.get(url).timeout(const Duration(seconds: 8));
       if (res.statusCode == 200) {
         final data = jsonDecode(res.body);
-        final List<dynamic> list = data['data'] ?? [];
-        return list.map((item) => _parseJikanMedia(item)).toList();
+        final List<dynamic>? list = data['data'];
+        if (list != null) {
+          return list.map((item) => _parseJikanMedia(item)).toList();
+        }
       }
     } catch (e) {
       appLog('Jikan search error: $e', tag: 'MAL');
@@ -120,7 +122,7 @@ class MALPlugin implements MediaPlugin {
   Future<FranchiseManifest> fetchFranchise(String id) async {
     String cleanId = id.replaceAll(RegExp(r'^(mal_|anilist_)'), '');
 
-    // Bridge check: If an AniList ID (> 100000) was erroneously passed, resolve its MAL ID via ani.zip
+    // AniList to MAL ID Bridge check
     final int? parsedNum = int.tryParse(cleanId);
     if (parsedNum != null && parsedNum > 60000) {
       try {
@@ -145,7 +147,7 @@ class MALPlugin implements MediaPlugin {
     final bool useMAL = clientId != null && clientId.isNotEmpty;
 
     appLog(
-      'Starting deep BFS franchise discovery for MAL ID $cleanId (Mode: ${useMAL ? "MAL API" : "Jikan v4"})...',
+      'Starting franchise traversal for MAL ID $cleanId (Mode: ${useMAL ? "Official MAL API" : "Jikan v4"})...',
       tag: 'MAL',
     );
 
@@ -153,10 +155,16 @@ class MALPlugin implements MediaPlugin {
       'sequel',
       'prequel',
       'side_story',
+      'side story',
       'alternative_version',
+      'alternative setting',
       'parent_story',
+      'parent story',
       'spin_off',
+      'spin-off',
       'full_story',
+      'summary',
+      'other',
     };
 
     while (queue.isNotEmpty) {
@@ -168,7 +176,7 @@ class MALPlugin implements MediaPlugin {
 
       dynamic data;
       if (useMAL) {
-        data = await _fetchMALDetails(currentId, clientId!);
+        data = await _fetchMALDetails(currentId, clientId);
       } else {
         data = await _fetchJikanDetailsWithRetry(currentId);
         await Future.delayed(const Duration(milliseconds: 350));
@@ -182,6 +190,7 @@ class MALPlugin implements MediaPlugin {
         entryMap[media.id] = SeriesManifest(series: media, episodes: episodes);
       }
 
+      // Official MAL Traversal
       if (useMAL) {
         final List<dynamic> related = data['related_anime'] ?? [];
         for (var item in related) {
@@ -197,7 +206,9 @@ class MALPlugin implements MediaPlugin {
             }
           }
         }
-      } else {
+      }
+      // Jikan Traversal
+      else {
         final List<dynamic> relations = data['relations'] ?? [];
         for (var rel in relations) {
           final String relType = rel['relation']?.toString().toLowerCase() ?? '';
@@ -244,9 +255,10 @@ class MALPlugin implements MediaPlugin {
         final res = await http.get(url).timeout(const Duration(seconds: 10));
         if (res.statusCode == 200) {
           final body = jsonDecode(res.body);
-          return body['data'];
+          if (body != null && body['data'] != null) {
+            return body['data'];
+          }
         } else if (res.statusCode == 429) {
-          appLog('Jikan 429 rate limit hit. Backing off for 1 second...', tag: 'MAL');
           await Future.delayed(const Duration(seconds: 1));
         }
       } catch (e) {
@@ -256,10 +268,21 @@ class MALPlugin implements MediaPlugin {
     return null;
   }
 
+// lib/engine/plugins/mal_plugin.dart
   MediaSearchResult _parseMALMedia(dynamic node) {
     double? parsedScore;
     if (node['mean'] != null) {
       parsedScore = (node['mean'] as num).toDouble();
+    }
+
+    // Robust year parsing (handles "YYYY-MM-DD", "YYYY-MM", or "YYYY")
+    int? parsedYear;
+    final rawStartDate = node['start_date']?.toString();
+    if (rawStartDate != null && rawStartDate.isNotEmpty) {
+      final yearMatch = RegExp(r'^(\d{4})').firstMatch(rawStartDate);
+      if (yearMatch != null) {
+        parsedYear = int.tryParse(yearMatch.group(1)!);
+      }
     }
 
     final altTitles = node['alternative_titles'] as Map<String, dynamic>? ?? {};
@@ -274,13 +297,13 @@ class MALPlugin implements MediaPlugin {
       originalTitle: node['title'],
       posterUrl: node['main_picture']?['large'] ?? node['main_picture']?['medium'],
       overview: node['synopsis'],
-      year: node['start_date'] != null
-          ? DateTime.tryParse(node['start_date'])?.year
-          : null,
+      year: parsedYear,
       totalEpisodes: node['num_episodes'],
       status: node['status']?.toString().toLowerCase(),
       averageScore: parsedScore,
       idMal: node['id'] as int?,
+      rawFormat: node['media_type']?.toString(),
+      endDate: node['end_date']?.toString(),
       type: _mapMediaType(node['media_type']),
     );
   }
@@ -303,6 +326,8 @@ class MALPlugin implements MediaPlugin {
       status: data['status']?.toString().toLowerCase(),
       averageScore: parsedScore,
       idMal: data['mal_id'] as int?,
+      rawFormat: data['type']?.toString(),
+      endDate: data['aired']?['to']?.toString(),
       type: _mapMediaType(data['type']),
     );
   }
